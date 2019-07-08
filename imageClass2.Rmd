@@ -1,0 +1,266 @@
+
+READING IN DATA
+```{r}
+train <- read.csv("C:/Users/TemwekaC/OneDrive/Competitions/Zindi/Image classification/train.csv", header=T)
+train$CLASS <- as.factor(train$CLASS)
+head(train)
+sum(is.na(train))
+
+NumObs<-NULL
+trainClass <- 0:6
+
+for (i in 1:7){
+  NumObs[i]<-length(which(train[,20]==trainClass[i])) #number of observations in each category
+}
+
+NumObs
+```
+
+
+EXPLORATORY DATA ANALYSIS
+```{r}
+pdf("rplot.pdf")
+#pairs(train)
+pairs(train, main = "Blocks", pch = 21, bg = c("red", "green3", "blue","yellow","purple","deeppink","red")[unclass(train$CLASS)])
+dev.off() 
+```
+
+```{r}
+par(mfrow=c(2,2))
+
+for (i in 1:19){
+    boxplot(train[,i] ~ train$CLASS, xlab="Class", ylab= names(train)[i], col = c("red", "green3", "blue","yellow","purple","deeppink","darkgreen")[unclass(train$CLASS)])
+}
+```
+
+
+```{r}
+par(mfrow=c(2,2))
+
+for (i in 1:19){
+    plot(train[,i],train$CLASS, ylab="Class", xlab= names(train)[i], col = c("red", "green3", "blue","yellow","purple","deeppink","darkgreen")[unclass(train$CLASS)])
+}
+```
+
+```{r}
+plot(train$SATURATION.MEAN[which(train$CLASS == trainClass[1])], train$CLASS[which(train$CLASS == trainClass[1])])
+```
+
+Plotting the QQ plot for each variable
+```{r}
+par(mfrow=c(2,2))
+for (i in 1:19){
+    qqnorm(train[,i], pch=1,frame=F)
+    qqline(train[,i], col=2)
+}
+
+```
+
+Normality Test on the variables
+```{r}
+trainx <- train[,-3]
+trainx <- trainx[-109,]
+NormalityV<-NULL
+Shap<-list()
+
+for (i in 1:18){
+  Shap[[i]]<-shapiro.test(trainx[,i])
+  NormalityV[i]<-ifelse(Shap[[i]]$p.value<=0.05,"reject Null Hypothesis", "Do not reject Null Hypothesis")
+  #the null hypothesis is that the vairable is normally distributed
+}
+
+NormalityV
+Shap
+
+#none of the predictors are normally distributed, suggesting that discriminant analysis is not the way to go.
+```
+
+Splitting the data into train and validation sets.
+```{r}
+#the validation set should have 20% of the observations from each category
+set.seed(308)
+testindex <- NULL
+testindex1 <- NULL
+ValidB <- NULL
+TrainB <- NULL
+
+for (i in 1:7){
+  testindex <- sample(which(trainx[,19]==trainClass[i]), trunc(length(which(trainx[,19]==trainClass[i]))/5))
+  testindex1 <- c(testindex, testindex1)
+}
+
+ValidB <- trainx[testindex1,]
+TrainB <- trainx[-testindex1,]
+
+NumObs1<-NULL
+NumObs2<-NULL
+for (i in 1:5){
+  NumObs1[i]<-length(which(ValidB[,19]==i)) #number of observations in each category in the test set
+  NumObs2[i]<-length(which(TrainB[,19]==i))  #number of observations in each category in the train set
+}
+
+#Checking that the observations have been split up as wanted. 
+NumObs
+NumObs1  
+NumObs2
+
+```
+
+SUPPORT VECTOR MACHINES
+```{r}
+library(e1071)
+```
+
+#radial kernel
+tuning of parameters
+```{r}
+set.seed(1)
+radialtune = tune.svm(CLASS ~ ., data = TrainB, cost=seq(from=5, to=300,by=5),gamma = c(0.05,0.1,0.15,0.2,0.5), kernel = "radial")
+print(radialtune)
+summary(radialtune)
+Performance1 <- radialtune$performances
+```
+
+### Best model
+```{r}
+bestrad_model = radialtune$best.model
+bestrad_model
+```
+
+fit the model using the best parameters from the tuning and try to predict the validation set values:
+```{r}  
+svm.model <- svm(CLASS ~ ., data = TrainB, cost = 10, gamma = 0.05, kernel = "radial", probability = TRUE)
+svm.pred <- predict(svm.model, ValidB[,-19], probability = TRUE)
+#summary(svm.pred)
+
+svm.pred
+
+```
+A cross-tabulation of the true versus the predicted values yields:
+```{r}
+table(pred = svm.pred, true = ValidB[,19])
+mean(svm.pred!=ValidB[,19])
+#6 6 6 6 6 6
+```
+
+
+#linear kernel
+tuning of parameters
+```{r}
+set.seed(1)
+lineartune = tune.svm(CLASS ~ ., data = TrainB, cost=seq(from=5, to=300,by=5), kernel = "linear", probability = TRUE)
+print(lineartune)
+summary(lineartune)
+Performance2 <- lineartune$performances
+```
+
+### Best model
+```{r}
+bestlin_model = lineartune$best.model
+bestlin_model
+```
+
+fit the model using the best parameters from the tuning and try to predict the validation set values:
+```{r}  
+svm.model1 <- svm(CLASS ~ ., data = TrainB, cost = 10, kernel = "linear", probability = TRUE)
+svm.pred1 <- predict(svm.model1, ValidB[,-19], probability = TRUE)
+svm.pred0 <- predict(svm.model1, TrainB[,-19], probability = TRUE)
+#summary(svm.pred1)
+
+svm.pred1
+
+```
+A cross-tabulation of the true versus the predicted values yields:
+```{r}
+table(pred = svm.pred1, true = ValidB[,19])
+mean(svm.pred1 !=ValidB[,19])
+
+table(pred = svm.pred0, true = TrainB[,19])
+mean(svm.pred0 !=TrainB[,19])
+
+```
+
+
+#polynomial kernel
+```{r}
+set.seed(1)
+Performance3 <-NULL
+gammaseq= seq(from = 0.1, to = 1, by = 0.1)
+#chose to keep degree constant at 3 degrees
+
+for (i in gammaseq){
+ Tunedpoly = tune.svm(CLASS ~ ., data = TrainB, cost= seq(from=1, to = 20, by = 1), gamma = i, kernel = "polynomial", probability = TRUE)
+ Performance3 <- rbind(Tunedpoly$performances, Performance3)
+}
+
+Bestpoly<- Performance3[order(Performance3$error),]
+Bestpoly[1,]
+
+```
+Prediction of Validation Set
+```{r}
+svm.polymodel <- svm(CLASS ~ ., data = TrainB, cost = 1, gamma = 0.5, kernel = "polynomial", degree = 3, probability = TRUE)
+svm.polypred <- predict(svm.polymodel, ValidB[,-19], type = "raw", probability = TRUE)
+#summary(svm.polypred)
+svm.polypred
+
+attr(svm.polypred, "probabilities")
+
+```
+
+A cross-tabulation of the true versus the predicted values yields:
+```{r}
+table(pred = svm.polypred, true = ValidB[,19])
+mean(svm.polypred!=ValidB[,19])
+#884  60   4  15  20
+```
+
+
+```{r}
+testset <- read.csv("C:/Users/TemwekaC/OneDrive/Competitions/Zindi/Image classification/test.csv", header=T)
+head(testset)
+testset <- testset[,-c(1, 4)]
+svm.test <- predict(svm.model1, testset, probability = TRUE, type = "response")
+
+svmresults <- attr(svm.test, "probabilities")
+write.csv(svmresults, file = "C:/Users/TemwekaC/OneDrive/Competitions/Zindi/Image classification/TC_SUbmission2.csv")
+```
+RANDOM FORESTS
+```{r}
+require(randomForest)
+RF100 <- randomForest(CLASS ~ .,data = TrainB, ntree = 100)
+RF500 <- randomForest(CLASS ~ .,data = TrainB, ntree = 500)
+
+# oob.err=double(13)
+# test.err=double(13)
+# 
+# #mtry is no of Variables randomly chosen at each split
+# for(mtry in 1:13) 
+# {
+#   rf=randomForest(medv ~ . , data = Boston , subset = train,mtry=mtry,ntree=400) 
+#   oob.err[mtry] = rf$mse[400] #Error of all Trees fitted
+#   
+#   pred<-predict(rf,Boston[-train,]) #Predictions on Test Set for each Tree
+#   test.err[mtry]= with(Boston[-train,], mean( (medv - pred)^2)) #Mean Squared Test Error
+#   
+#   cat(mtry," ") #printing the output to the console
+#   
+# }
+
+predrf1 <- predict(RF100, ValidB[,-19], type = "prob")
+predrf2 <- predict(RF500, ValidB[,-19], type = "prob")
+predrf1
+predrf2
+write.csv(predrf1, file = "C:/Users/TemwekaC/OneDrive/Competitions/Zindi/Image classification/RandFor100.csv")
+```
+
+
+```{r}
+rf.test <- predict(RF100, testset, type = "prob")
+
+head(rf.test) 
+head(svmresults)
+
+write.csv(rf.test, file = "C:/Users/TemwekaC/OneDrive/Competitions/Zindi/Image classification/TC_Submission31.csv")
+```
+
